@@ -1,59 +1,109 @@
 module Print exposing (..)
 
 import AST exposing (..)
+import String
 
 
-expression : Expression -> String
-expression value =
+expression : String -> Expression -> String
+expression input value =
     case value of
         UnaryExpr op expr ->
-            operator op ++ expression expr
+            sliceOffset input op ++ expression input expr
 
-        AggregateExpr { op, param, expr, without, grouping } ->
-            aggregator op
+        AggregateExpr { op, args, group } ->
+            sliceOffset input op
                 ++ "("
-                ++ Maybe.withDefault "" (Maybe.map (\p -> expression p ++ ", ") param)
-                ++ expression expr
-                ++ if grouping == [] then
-                    ""
-                   else if without then
-                    " without (" ++ String.join ", " grouping ++ ")"
-                   else
-                    " by (" ++ String.join ", " grouping ++ ")"
+                ++ String.join ", " (List.map (expression input) args)
+                ++ ")"
+                ++ case group of
+                    Nothing ->
+                        ""
+
+                    Just { grouping, labels } ->
+                        " "
+                            ++ sliceOffset input grouping
+                            ++ " ("
+                            ++ String.join ", " (List.map (sliceOffset input) labels)
+                            ++ ")"
 
         BinaryExpr lhs op rhs ->
-            expression lhs ++ " " ++ operator op ++ " " ++ expression rhs
+            expression input lhs
+                ++ " "
+                ++ sliceOffset input op.op
+                ++ modifiers input op.modifiers
+                ++ " "
+                ++ expression input rhs
 
         FunctionCall { func, args } ->
-            "FunctionCall"
+            sliceOffset input func
+                ++ "("
+                ++ String.join ", " (List.map (expression input) args)
+                ++ ")"
 
-        MatrixSelector { name, range, offset, labelMatchers } ->
-            ""
-
-        NumberLiteral string ->
-            string
+        NumberLiteral num ->
+            sliceOffset input num
 
         ParenExpr expr ->
-            "(" ++ expression expr ++ ")"
+            "(" ++ expression input expr ++ ")"
 
-        StringLiteral string ->
-            string
+        StringLiteral str ->
+            sliceOffset input str
 
-        VectorSelector { name, offset, labelMatchers } ->
-            name
-                ++ matchers labelMatchers
-                ++ maybeOffset offset
+        Selector { name, range, offset, labelMatchers } ->
+            (case name of
+                Just n ->
+                    " " ++ sliceOffset input n
+
+                Nothing ->
+                    ""
+            )
+                ++ matchers input labelMatchers
+                ++ maybeRange input range
+                ++ maybeOffset input offset
 
 
-maybeOffset : Maybe Duration -> String
-maybeOffset offset =
-    offset
-        |> Maybe.map (\d -> " offset " ++ duration d)
+modifiers : String -> List Modifier -> String
+modifiers input mds =
+    case mds of
+        [] ->
+            ""
+
+        mods ->
+            " "
+                ++ String.join " "
+                    (List.map
+                        (\mod ->
+                            sliceOffset input mod.name
+                                ++ (case mod.labels of
+                                        [] ->
+                                            ""
+
+                                        lbls ->
+                                            " ("
+                                                ++ String.join ", " (List.map (sliceOffset input) lbls)
+                                                ++ ")"
+                                   )
+                        )
+                        mods
+                    )
+
+
+maybeOffset : String -> Maybe Offset -> String
+maybeOffset input maybeDuration =
+    maybeDuration
+        |> Maybe.map (\off -> " offset " ++ sliceOffset input off)
         |> Maybe.withDefault ""
 
 
-matchers : List Matcher -> String
-matchers labelMatchers =
+maybeRange : String -> Maybe Offset -> String
+maybeRange input range =
+    range
+        |> Maybe.map (\off -> "[" ++ sliceOffset input off ++ "]")
+        |> Maybe.withDefault ""
+
+
+matchers : String -> List Matcher -> String
+matchers input labelMatchers =
     if labelMatchers == [] then
         ""
     else
@@ -61,115 +111,15 @@ matchers labelMatchers =
             ++ (labelMatchers
                     |> List.map
                         (\{ name, op, value } ->
-                            name ++ matchOperator op ++ value
+                            sliceOffset input name
+                                ++ sliceOffset input op
+                                ++ sliceOffset input value
                         )
                     |> String.join ", "
                )
             ++ "}"
 
 
-duration : Duration -> String
-duration { value, units } =
-    value ++ units
-
-
-operator : Operator -> String
-operator op =
-    case op of
-        SUB ->
-            "-"
-
-        ADD ->
-            "+"
-
-        MUL ->
-            "*"
-
-        MOD ->
-            "%"
-
-        DIV ->
-            "/"
-
-        LAND ->
-            "and"
-
-        LOR ->
-            "or"
-
-        LUnless ->
-            "unless"
-
-        EQL ->
-            "=="
-
-        NEQ ->
-            "!="
-
-        LTE ->
-            "<="
-
-        LSS ->
-            "<"
-
-        GTE ->
-            ">="
-
-        GTR ->
-            ">"
-
-        POW ->
-            "^"
-
-
-matchOperator : MatchOperator -> String
-matchOperator op =
-    case op of
-        MatchEqual ->
-            "="
-
-        MatchNotEqual ->
-            "!="
-
-        MatchRegexp ->
-            "=~"
-
-        MatchNotRegexp ->
-            "!~"
-
-
-aggregator : Aggregator -> String
-aggregator agg =
-    case agg of
-        Avg ->
-            "avg"
-
-        Count ->
-            "count"
-
-        Sum ->
-            "sum"
-
-        Min ->
-            "min"
-
-        Max ->
-            "max"
-
-        Stddev ->
-            "stddev"
-
-        Stdvar ->
-            "stdvar"
-
-        TopK ->
-            "topk"
-
-        BottomK ->
-            "bottomk"
-
-        CountValues ->
-            "count_values"
-
-        Quantile ->
-            "quantile"
+sliceOffset : String -> Offset -> String
+sliceOffset input { start, end } =
+    String.slice start end input

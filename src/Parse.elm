@@ -28,11 +28,8 @@ expression =
 unaryExpression : Parser Expression
 unaryExpression =
     Parser.succeed UnaryExpr
-        |= Parser.oneOf
-            [ Parser.succeed SUB |. Parser.symbol "-"
-            , Parser.succeed ADD |. Parser.symbol "+"
-            ]
-        |= Parser.lazy (\_ -> primaryExpression)
+        |= getOffset (Parser.oneOf (List.map Parser.symbol unaryOperators))
+        |= Parser.lazy (\_ -> Parser.oneOf [ unaryExpression, primaryExpression ])
 
 
 parenExpression : Parser Expression
@@ -51,106 +48,88 @@ primaryExpression =
             [ parenExpression
             , numberLiteral
             , stringLiteral
-            , vectorSelectorWithoutName
-            , vectorSelector
+            , aggregateExpression
+            , functionCall
+            , selectorWithoutName
+            , selector
             ]
         |. Parser.spaces
+
+
+aggregateExpression : Parser Expression
+aggregateExpression =
+    Parser.succeed
+        (\op ( args, group ) ->
+            AggregateExpr
+                { op = op
+                , args = args
+                , group = group
+                }
+        )
+        |= getOffset (Parser.oneOf (List.map Parser.keyword aggregateOperators))
+        |. Parser.spaces
+        |= Parser.oneOf
+            [ aggregateExpression1 -- group followed by arguments
+            , aggregateExpression2 -- arguments followed by group
+            ]
+
+
+aggregateExpression1 : Parser ( List Expression, Maybe AggregateGroup )
+aggregateExpression1 =
+    Parser.succeed (\a b -> ( b, Just a ))
+        |= aggregateGroup
+        |. Parser.spaces
+        |= arguments
+
+
+aggregateExpression2 : Parser ( List Expression, Maybe AggregateGroup )
+aggregateExpression2 =
+    Parser.succeed Tuple.pair
+        |= arguments
+        |. Parser.spaces
+        |= Parser.oneOf
+            [ Parser.map Just aggregateGroup
+            , Parser.succeed Nothing
+            ]
+
+
+functionCall : Parser Expression
+functionCall =
+    Parser.succeed
+        (\func args -> FunctionCall { func = func, args = args })
+        |= Parser.backtrackable
+            (getOffset (Parser.oneOf (List.map Parser.keyword functions)))
+        |. Parser.spaces
+        |= arguments
+        |. Parser.spaces
+
+
+aggregateGroup : Parser AggregateGroup
+aggregateGroup =
+    Parser.succeed AggregateGroup
+        |= getOffset (Parser.oneOf (List.map Parser.keyword groupingKeywords))
+        |. Parser.spaces
+        |= labels
 
 
 binaryExpression : Parser Expression
 binaryExpression =
-    Parser.oneOf
-        [ binary1
-        , binary2
-        , binary3
-        , binary4
-        , binary5
-        , binary6
-        ]
-
-
-binary1 : Parser Expression
-binary1 =
-    operator operator1 operand1
-
-
-operand1 : Parser Expression
-operand1 =
-    Parser.oneOf [ primaryExpression, unaryExpression ]
-
-
-binary2 : Parser Expression
-binary2 =
-    operator operator2 operand2
-
-
-operand2 : Parser Expression
-operand2 =
-    Parser.oneOf [ operand1, binary1 ]
-
-
-binary3 : Parser Expression
-binary3 =
-    operator operator3 operand3
-
-
-operand3 : Parser Expression
-operand3 =
-    Parser.oneOf [ operand2, binary2 ]
-
-
-binary4 : Parser Expression
-binary4 =
-    operator operator4 operand4
-
-
-operand4 : Parser Expression
-operand4 =
-    Parser.oneOf [ operand3, binary3 ]
-
-
-binary5 : Parser Expression
-binary5 =
-    operator operator5 operand5
-
-
-operand5 : Parser Expression
-operand5 =
-    Parser.oneOf [ operand4, binary4 ]
-
-
-binary6 : Parser Expression
-binary6 =
-    operator operator6 operand6
-
-
-operand6 : Parser Expression
-operand6 =
-    Parser.oneOf [ operand5, binary5 ]
-
-
-operator : Parser Operator -> Parser Expression -> Parser Expression
-operator op operand =
     Parser.succeed BinaryExpr
-        |= Parser.lazy (\_ -> Parser.backtrackable operand)
-        |= op
+        |= Parser.lazy (\_ -> Parser.backtrackable <| Parser.oneOf [ unaryExpression, primaryExpression ])
+        |= operator
         |. Parser.spaces
-        |= Parser.oneOf
-            [ Parser.lazy (\_ -> binaryExpression)
-            , operand
-            ]
+        |= Parser.lazy (\_ -> expression)
         |. Parser.spaces
 
 
-{-| TODO: check for the `__name__` in matchers
--}
-vectorSelectorWithoutName : Parser Expression
-vectorSelectorWithoutName =
+selectorWithoutName : Parser Expression
+selectorWithoutName =
     Parser.succeed
         (\labelMatchers off ->
-            VectorSelector
-                { name = ""
+            Selector
+                { name = Nothing
                 , labelMatchers = labelMatchers
+                , range = Nothing
                 , offset = off
                 }
         )
@@ -159,24 +138,45 @@ vectorSelectorWithoutName =
         |= offset
 
 
-vectorSelector : Parser Expression
-vectorSelector =
+selector : Parser Expression
+selector =
     Parser.succeed
-        (\name labelMatchers off ->
-            VectorSelector
-                { name = name
+        (\name labelMatchers rng offst ->
+            Selector
+                { name = Just name
                 , labelMatchers = labelMatchers
-                , offset = off
+                , range = rng
+                , offset = offst
                 }
         )
-        |= Parser.variable
-            { start = isVarChar
-            , inner = (\c -> isVarChar c || c == ':')
-            , reserved = Set.empty -- TODO: add keywords
-            }
-        |= matchers
+        |= getOffset
+            (Parser.variable
+                { start = isVarChar
+                , inner = (\c -> isVarChar c || c == ':')
+                , reserved = keywords
+                }
+            )
+        |. Parser.spaces
+        |= Parser.oneOf [ matchers, Parser.succeed [] ]
+        |. Parser.spaces
+        |= range
         |. Parser.spaces
         |= offset
+
+
+labels : Parser (List Offset)
+labels =
+    Parser.oneOf
+        [ Parser.sequence
+            { start = "("
+            , separator = ","
+            , end = ")"
+            , spaces = Parser.spaces
+            , item = label
+            , trailing = Parser.Forbidden
+            }
+        , Parser.succeed []
+        ]
 
 
 matchers : Parser (List Matcher)
@@ -191,112 +191,144 @@ matchers =
         }
 
 
-offset : Parser (Maybe Duration)
+arguments : Parser (List Expression)
+arguments =
+    Parser.sequence
+        { start = "("
+        , separator = ","
+        , end = ")"
+        , spaces = Parser.spaces
+        , item = Parser.lazy (\_ -> expression)
+        , trailing = Parser.Forbidden
+        }
+
+
+range : Parser (Maybe Offset)
+range =
+    Parser.oneOf
+        [ Parser.succeed Just
+            |. Parser.symbol "["
+            |. Parser.spaces
+            |= duration
+            |. Parser.spaces
+            |. Parser.symbol "]"
+            |. Parser.spaces
+        , Parser.succeed Nothing
+        ]
+
+
+offset : Parser (Maybe Offset)
 offset =
     Parser.oneOf
         [ Parser.succeed Just
-            |. Parser.keyword "offset"
+            |. Parser.keyword offsetKeyword
             |. Parser.spaces
             |= duration
         , Parser.succeed Nothing
         ]
 
 
-duration : Parser Duration
+duration : Parser Offset
 duration =
-    Parser.succeed Duration
-        |= Parser.number
-            { int = Just String.fromInt
-            , hex = Nothing
-            , octal = Nothing
-            , binary = Nothing
-            , float = Nothing
-            }
-        |= Parser.oneOf
-            [ Parser.succeed "s" |. Parser.symbol "s"
-            , Parser.succeed "m" |. Parser.symbol "m"
-            , Parser.succeed "h" |. Parser.symbol "h"
-            , Parser.succeed "d" |. Parser.symbol "d"
-            , Parser.succeed "w" |. Parser.symbol "w"
-            , Parser.succeed "y" |. Parser.symbol "y"
-            ]
+    getOffset <|
+        Parser.succeed ()
+            |. Parser.number
+                { int = Just String.fromInt
+                , hex = Nothing
+                , octal = Nothing
+                , binary = Nothing
+                , float = Nothing
+                }
+            |. Parser.oneOf (List.map Parser.token durationTokens)
 
 
-operator1 : Parser Operator
-operator1 =
-    Parser.succeed POW |. Parser.symbol "^"
+operator : Parser Operator
+operator =
+    Parser.succeed Operator
+        |= getOffset
+            (Parser.oneOf
+                (List.map Parser.symbol arithmeticOperators
+                    ++ List.map Parser.symbol comparisonOperators
+                    ++ List.map Parser.keyword keywordOperators
+                )
+            )
+        |. Parser.spaces
+        |= modifiers
 
 
-operator2 : Parser Operator
-operator2 =
+modifiers : Parser (List Modifier)
+modifiers =
+    Parser.loop [] modifiersHelp
+
+
+modifiersHelp : List Modifier -> Parser (Parser.Step (List Modifier) (List Modifier))
+modifiersHelp revModifiers =
+    -- TODO, only parse bool modifier for comparisonOperators?
     Parser.oneOf
-        [ Parser.succeed MUL |. Parser.symbol "*"
-        , Parser.succeed MOD |. Parser.symbol "%"
-        , Parser.succeed DIV |. Parser.symbol "/"
+        [ Parser.succeed (\mod -> Parser.Loop (mod :: revModifiers))
+            |= modifier
+            |. Parser.spaces
+        , Parser.succeed ()
+            |> Parser.map (\_ -> Parser.Done (List.reverse revModifiers))
         ]
 
 
-operator3 : Parser Operator
-operator3 =
+modifier : Parser Modifier
+modifier =
     Parser.oneOf
-        [ Parser.succeed SUB |. Parser.symbol "-"
-        , Parser.succeed ADD |. Parser.symbol "+"
+        [ Parser.succeed (\off -> Modifier off [])
+            |= getOffset (Parser.keyword boolKeyword)
+        , Parser.succeed Modifier
+            |= getOffset (Parser.oneOf (List.map Parser.keyword groupingModifierKeywords))
+            |. Parser.spaces
+            |= labels
         ]
-
-
-operator4 : Parser Operator
-operator4 =
-    Parser.oneOf
-        [ Parser.succeed EQL |. Parser.symbol "=="
-        , Parser.succeed NEQ |. Parser.symbol "!="
-        , Parser.succeed LTE |. Parser.symbol "<="
-        , Parser.succeed LSS |. Parser.symbol "<"
-        , Parser.succeed GTE |. Parser.symbol ">="
-        , Parser.succeed GTR |. Parser.symbol ">"
-        ]
-
-
-operator5 : Parser Operator
-operator5 =
-    Parser.oneOf
-        [ Parser.succeed LAND |. Parser.symbol "and"
-        , Parser.succeed LUnless |. Parser.symbol "unless"
-        ]
-
-
-operator6 : Parser Operator
-operator6 =
-    Parser.succeed LOR |. Parser.symbol "or"
 
 
 matcher : Parser Matcher
 matcher =
     Parser.succeed Matcher
-        |= Parser.variable
+        |= getOffset label
+        |. Parser.spaces
+        |= getOffset (Parser.oneOf (List.map Parser.symbol matchOperators))
+        |. Parser.spaces
+        |= Parser.oneOf
+            [ string '\''
+            , string '"' -- "
+            , string '`'
+            ]
+
+
+label : Parser Offset
+label =
+    getOffset <|
+        Parser.variable
             { inner = \c -> isVarChar c || Char.isDigit c
             , start = isVarChar
             , reserved = Set.empty
             }
-        |. Parser.spaces
-        |= Parser.oneOf
-            [ Parser.succeed MatchRegexp |. Parser.symbol "=~"
-            , Parser.succeed MatchEqual |. Parser.symbol "="
-            , Parser.succeed MatchNotEqual |. Parser.symbol "!="
-            , Parser.succeed MatchNotRegexp |. Parser.symbol "!~"
-            ]
-        |. Parser.spaces
-        |= Parser.oneOf [ string '\'', string '"', string '`' ]
 
 
 numberLiteral : Parser Expression
 numberLiteral =
-    Parser.number
-        { int = Just (String.fromInt >> NumberLiteral)
-        , hex = Nothing
-        , octal = Nothing
-        , binary = Nothing
-        , float = Just (String.fromFloat >> NumberLiteral)
-        }
+    Parser.succeed NumberLiteral
+        |= number
+
+
+number : Parser Offset
+number =
+    getOffset <|
+        Parser.oneOf
+            -- TODO: support octal: 0755
+            (Parser.number
+                { int = Just (always ())
+                , hex = Just (always ())
+                , octal = Nothing
+                , binary = Nothing
+                , float = Just (always ())
+                }
+                :: List.map Parser.keyword numberKeywords
+            )
 
 
 {-| TODO: should not allow escape
@@ -306,14 +338,14 @@ stringLiteral =
     Parser.map StringLiteral <|
         Parser.oneOf
             [ string '\''
-            , string '"'
+            , string '"' -- "
             , string '`'
             ]
 
 
-string : Char -> Parser String
+string : Char -> Parser Offset
 string separator =
-    Parser.getChompedString <|
+    getOffset <|
         Parser.succeed ()
             |. Parser.token (String.fromChar separator)
             |. Parser.loop separator stringHelp
@@ -337,3 +369,156 @@ isVarChar char =
     Char.isLower char
         || Char.isUpper char
         || (char == '_')
+
+
+durationTokens : List String
+durationTokens =
+    [ "s", "m", "h", "d", "w", "y" ]
+
+
+unaryOperators : List String
+unaryOperators =
+    [ "-", "+" ]
+
+
+matchOperators : List String
+matchOperators =
+    [ "=~", "=", "!=", "!~" ]
+
+
+arithmeticOperators : List String
+arithmeticOperators =
+    [ "^", "*", "%", "/", "-", "+" ]
+
+
+comparisonOperators : List String
+comparisonOperators =
+    [ "==", "!=", "<=", "<", ">=", ">" ]
+
+
+keywordOperators : List String
+keywordOperators =
+    [ "and", "unless", "or" ]
+
+
+functions : List String
+functions =
+    [ "abs"
+    , "absent"
+    , "avg_over_time"
+    , "ceil"
+    , "changes"
+    , "clamp_max"
+    , "clamp_min"
+    , "count_over_time"
+    , "days_in_month"
+    , "day_of_month"
+    , "day_of_week"
+    , "delta"
+    , "deriv"
+    , "exp"
+    , "floor"
+    , "histogram_quantile"
+    , "holt_winters"
+    , "hour"
+    , "idelta"
+    , "increase"
+    , "irate"
+    , "label_replace"
+    , "label_join"
+    , "ln"
+    , "log10"
+    , "log2"
+    , "max_over_time"
+    , "min_over_time"
+    , "minute"
+    , "month"
+    , "predict_linear"
+    , "quantile_over_time"
+    , "rate"
+    , "resets"
+    , "round"
+    , "scalar"
+    , "sort"
+    , "sort_desc"
+    , "sqrt"
+    , "stddev_over_time"
+    , "stdvar_over_time"
+    , "sum_over_time"
+    , "time"
+    , "timestamp"
+    , "vector"
+    , "year"
+    ]
+
+
+aggregateOperators : List String
+aggregateOperators =
+    [ "avg"
+    , "count"
+    , "sum"
+    , "min"
+    , "max"
+    , "stddev"
+    , "stdvar"
+    , "topk"
+    , "bottomk"
+    , "count_values"
+    , "quantile"
+    ]
+
+
+boolKeyword : String
+boolKeyword =
+    "bool"
+
+
+offsetKeyword : String
+offsetKeyword =
+    "offset"
+
+
+groupingKeywords : List String
+groupingKeywords =
+    [ "without", "by" ]
+
+
+numberKeywords : List String
+numberKeywords =
+    [ "nan", "inf" ]
+
+
+getOffset : Parser a -> Parser Offset
+getOffset parser =
+    Parser.succeed Offset
+        |= Parser.getOffset
+        |. parser
+        |= Parser.getOffset
+
+
+keywords : Set String
+keywords =
+    Set.fromList
+        (keywordOperators
+            ++ aggregateOperators
+            ++ groupingKeywords
+            ++ numberKeywords
+            ++ groupingModifierKeywords
+            ++ [ "alert"
+               , "if"
+               , "for"
+               , "labels"
+               , "annotations"
+               , boolKeyword
+               , offsetKeyword
+               ]
+        )
+
+
+groupingModifierKeywords : List String
+groupingModifierKeywords =
+    [ "on"
+    , "ignoring"
+    , "group_left"
+    , "group_right"
+    ]
