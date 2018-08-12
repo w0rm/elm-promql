@@ -59,13 +59,7 @@ primaryExpression =
 aggregateExpression : Parser Expression
 aggregateExpression =
     Parser.succeed
-        (\op ( args, group ) ->
-            AggregateExpr
-                { op = op
-                , args = args
-                , group = group
-                }
-        )
+        (\op aggregateExpr -> aggregateExpr op)
         |= getOffset (Parser.oneOf (List.map Parser.keyword aggregateOperators))
         |. Parser.spaces
         |= Parser.oneOf
@@ -74,17 +68,17 @@ aggregateExpression =
             ]
 
 
-aggregateExpression1 : Parser ( List Expression, Maybe AggregateGroup )
+aggregateExpression1 : Parser (Offset -> Expression)
 aggregateExpression1 =
-    Parser.succeed (\a b -> ( b, Just a ))
+    Parser.succeed (\grp args -> \off -> AggregateExpr1 off grp args)
         |= aggregateGroup
         |. Parser.spaces
         |= arguments
 
 
-aggregateExpression2 : Parser ( List Expression, Maybe AggregateGroup )
+aggregateExpression2 : Parser (Offset -> Expression)
 aggregateExpression2 =
-    Parser.succeed Tuple.pair
+    Parser.succeed (\args maybeGrp -> \off -> AggregateExpr2 off args maybeGrp)
         |= arguments
         |. Parser.spaces
         |= Parser.oneOf

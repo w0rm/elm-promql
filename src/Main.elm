@@ -1,11 +1,11 @@
 module Main exposing (main)
 
 import Browser
-import Html exposing (Html)
-import Html.Attributes exposing (value, style)
+import Html exposing (Html, Attribute)
+import Html.Attributes exposing (value, style, spellcheck)
 import Html.Events exposing (onInput, onClick)
 import Parse
-import Print
+import Highlight
 import Parser
 import Fixtures
 
@@ -39,15 +39,13 @@ view input =
         result =
             case Parser.run Parse.query (String.toLower input) of
                 Ok expr ->
-                    Print.expression input (Debug.log "result" expr)
+                    Highlight.highlight input (Debug.log "result" expr)
 
                 Err deadEnds ->
-                    Debug.toString deadEnds
+                    [ (\_ -> Html.span [ style "color" "red" ] [ Html.text input ]) (Debug.log "error" deadEnds) ]
     in
         Html.div []
-            [ Html.textarea [ value input, onInput identity ] []
-            , Html.div [] [ Html.text result ]
-            , Html.hr [] []
+            [ highghtedResult input result
             , Html.div []
                 (results
                     |> List.map
@@ -64,4 +62,32 @@ view input =
                                 [ Html.text str ]
                         )
                 )
+            ]
+
+
+highghtedResult : String -> List (Html String) -> Html String
+highghtedResult input result =
+    let
+        styles =
+            [ style "width" "500px"
+            , style "height" "200px"
+            , style "border" "1px solid grey"
+            , style "font" "14px/1 monospace"
+            , style "padding" "5px"
+            , style "position" "absolute"
+            , style "background" "transparent"
+            ]
+    in
+        Html.div [ style "width" "500px", style "height" "200px" ]
+            [ Html.div styles result
+            , Html.textarea
+                ([ value input
+                 , onInput identity
+                 , spellcheck False
+                 , style "color" "transparent"
+                 , style "caret-color" "black"
+                 ]
+                    ++ styles
+                )
+                []
             ]

@@ -2,13 +2,8 @@ module AST exposing (..)
 
 
 type Expression
-    = AggregateExpr
-        -- aggregation operation on a Vector
-        -- <aggr-op>([parameter,] <vector expression>) [without|by (<label list>)]
-        { op : Offset
-        , args : List Expression -- parameter used by some aggregators, the Vector expression over which is aggregated
-        , group : Maybe AggregateGroup
-        }
+    = AggregateExpr1 Offset AggregateGroup (List Expression)
+    | AggregateExpr2 Offset (List Expression) (Maybe AggregateGroup)
     | BinaryExpr Expression Operator Expression
     | FunctionCall
         { func : Offset
