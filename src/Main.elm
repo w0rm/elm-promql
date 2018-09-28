@@ -1,27 +1,12 @@
 module Main exposing (main)
 
 import Browser
-import Html exposing (Html, Attribute)
-import Html.Attributes exposing (value, style, spellcheck)
-import Html.Events exposing (onInput, onClick)
-import Parse
 import Highlight
+import Html exposing (Attribute, Html)
+import Html.Attributes exposing (spellcheck, style, value)
+import Html.Events exposing (onClick, onInput)
+import Parse
 import Parser
-import Fixtures
-
-
-results : List ( String, Bool )
-results =
-    Fixtures.succeed
-        |> List.map
-            (\input ->
-                case Parser.run Parse.query (String.toLower input) of
-                    Ok _ ->
-                        ( input, True )
-
-                    Err _ ->
-                        ( input, False )
-            )
 
 
 main : Program () String String
@@ -44,50 +29,41 @@ view input =
                 Err deadEnds ->
                     [ (\_ -> Html.span [ style "color" "red" ] [ Html.text input ]) (Debug.log "error" deadEnds) ]
     in
-        Html.div []
-            [ highghtedResult input result
-            , Html.div []
-                (results
-                    |> List.map
-                        (\( str, r ) ->
-                            Html.p
-                                [ style "color"
-                                    (if r then
-                                        "lightgreen"
-                                     else
-                                        "red"
-                                    )
-                                , onClick str
-                                ]
-                                [ Html.text str ]
-                        )
-                )
-            ]
+    Html.div []
+        [ highghtedResult input result
+        ]
 
 
 highghtedResult : String -> List (Html String) -> Html String
 highghtedResult input result =
     let
         styles =
-            [ style "width" "500px"
-            , style "height" "200px"
-            , style "border" "1px solid grey"
-            , style "font" "14px/1 monospace"
+            [ style "width" "100%"
+            , style "font" "14px monospace"
             , style "padding" "5px"
-            , style "position" "absolute"
+            , style "margin" "0"
+            , style "white-space" "pre"
             , style "background" "transparent"
+            , style "box-sizing" "border-box"
             ]
     in
-        Html.div [ style "width" "500px", style "height" "200px" ]
-            [ Html.div styles result
-            , Html.textarea
-                ([ value input
-                 , onInput identity
-                 , spellcheck False
-                 , style "color" "transparent"
-                 , style "caret-color" "black"
-                 ]
-                    ++ styles
-                )
-                []
-            ]
+    Html.div [ style "width" "500px", style "min-height" "40px", style "position" "relative" ]
+        [ Html.div (styles ++ [ style "border" "1px solid transparent" ]) (result ++ [ Html.br [] [] ])
+        , Html.textarea
+            ([ value input
+             , onInput identity
+             , spellcheck False
+             , style "resize" "none"
+             , style "height" "100%"
+             , style "position" "absolute"
+             , style "color" "transparent"
+             , style "caret-color" "black"
+             , style "top" "0"
+             , style "bottom" "0"
+             , style "border" "1px solid black"
+             , style "overflow" "hidden"
+             ]
+                ++ styles
+            )
+            []
+        ]

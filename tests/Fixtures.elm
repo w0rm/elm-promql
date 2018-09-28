@@ -1,4 +1,4 @@
-module Fixtures exposing (succeed, fail)
+module Fixtures exposing (fail, succeed)
 
 -- https://github.com/prometheus/prometheus/blob/master/promql/parse_test.go
 
@@ -187,7 +187,6 @@ fail =
     -- Test aggregation
     , "sum without(==)(some_metric)"
     , "sum some_metric by (test)"
-    , "sum (some_metric) by test"
     , "sum (some_metric) by test"
     , "sum () by (test)"
     , "MIN keep_common (some_metric)"
