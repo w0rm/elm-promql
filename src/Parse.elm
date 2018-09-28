@@ -1,8 +1,7 @@
 module Parse exposing (query)
 
 import AST exposing (..)
-import Parser exposing (Parser, (|=), (|.))
-import String
+import Parser exposing ((|.), (|=), Parser)
 import Set exposing (Set)
 
 
@@ -70,7 +69,14 @@ aggregateExpression =
 
 aggregateExpression1 : Parser (Offset -> Expression)
 aggregateExpression1 =
-    Parser.succeed (\grp args -> \off -> AggregateExpr1 off grp args)
+    Parser.succeed
+        (\grp args off ->
+            AggregateExpr1
+                { operator = off
+                , group = grp
+                , arguments = args
+                }
+        )
         |= aggregateGroup
         |. Parser.spaces
         |= arguments
@@ -78,7 +84,14 @@ aggregateExpression1 =
 
 aggregateExpression2 : Parser (Offset -> Expression)
 aggregateExpression2 =
-    Parser.succeed (\args maybeGrp -> \off -> AggregateExpr2 off args maybeGrp)
+    Parser.succeed
+        (\args maybeGrp off ->
+            AggregateExpr2
+                { operator = off
+                , arguments = args
+                , maybeGroup = maybeGrp
+                }
+        )
         |= arguments
         |. Parser.spaces
         |= Parser.oneOf
@@ -90,7 +103,7 @@ aggregateExpression2 =
 functionCall : Parser Expression
 functionCall =
     Parser.succeed
-        (\func args -> FunctionCall { func = func, args = args })
+        (\func args -> FunctionCall { function = func, arguments = args })
         |= Parser.backtrackable
             (getOffset (Parser.oneOf (List.map Parser.keyword functions)))
         |. Parser.spaces
@@ -108,9 +121,25 @@ aggregateGroup =
 
 binaryExpression : Parser Expression
 binaryExpression =
-    Parser.succeed BinaryExpr
+    Parser.succeed
+        (\leftExpr op mods rightExp ->
+            BinaryExpr
+                { leftExpression = leftExpr
+                , operator = op
+                , modifiers = mods
+                , rightExpression = rightExp
+                }
+        )
         |= Parser.lazy (\_ -> Parser.backtrackable <| Parser.oneOf [ unaryExpression, primaryExpression ])
-        |= operator
+        |= getOffset
+            (Parser.oneOf
+                (List.map Parser.symbol arithmeticOperators
+                    ++ List.map Parser.symbol comparisonOperators
+                    ++ List.map Parser.keyword keywordOperators
+                )
+            )
+        |. Parser.spaces
+        |= modifiers
         |. Parser.spaces
         |= Parser.lazy (\_ -> expression)
         |. Parser.spaces
@@ -146,7 +175,7 @@ selector =
         |= getOffset
             (Parser.variable
                 { start = isVarChar
-                , inner = (\c -> isVarChar c || c == ':')
+                , inner = \c -> isVarChar c || c == ':'
                 , reserved = keywords
                 }
             )
@@ -234,20 +263,6 @@ duration =
                 , float = Nothing
                 }
             |. Parser.oneOf (List.map Parser.token durationTokens)
-
-
-operator : Parser Operator
-operator =
-    Parser.succeed Operator
-        |= getOffset
-            (Parser.oneOf
-                (List.map Parser.symbol arithmeticOperators
-                    ++ List.map Parser.symbol comparisonOperators
-                    ++ List.map Parser.keyword keywordOperators
-                )
-            )
-        |. Parser.spaces
-        |= modifiers
 
 
 modifiers : Parser (List Modifier)

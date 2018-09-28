@@ -1,8 +1,8 @@
-module Highlight exposing (..)
+module Highlight exposing (highlight)
 
-import Html exposing (span, text, Html, Attribute)
-import Html.Attributes exposing (style)
 import AST exposing (..)
+import Html exposing (Attribute, Html, span, text)
+import Html.Attributes exposing (style)
 import String
 
 
@@ -56,6 +56,7 @@ highlight input expr =
                         :: text (String.slice currOffset offset.start input)
                         :: terms
                     )
+
                 else
                     ( offset.end
                     , span [ color term ] [ text (String.slice offset.start offset.end input) ]
@@ -75,31 +76,32 @@ expression value =
         UnaryExpr op expr ->
             ( OperatorTerm, op ) :: expression expr
 
-        AggregateExpr1 op { grouping, labels } args ->
-            ( KeywordTerm, op )
-                :: ( KeywordTerm, grouping )
-                :: List.map (Tuple.pair LabelTerm) labels
-                ++ List.concatMap expression args
+        AggregateExpr1 { operator, group, arguments } ->
+            ( KeywordTerm, operator )
+                :: ( KeywordTerm, group.grouping )
+                :: List.map (Tuple.pair LabelTerm) group.labels
+                ++ List.concatMap expression arguments
 
-        AggregateExpr2 op args group ->
-            ( KeywordTerm, op )
-                :: List.concatMap expression args
-                ++ case group of
-                    Nothing ->
-                        []
+        AggregateExpr2 { operator, arguments, maybeGroup } ->
+            ( KeywordTerm, operator )
+                :: List.concatMap expression arguments
+                ++ (case maybeGroup of
+                        Nothing ->
+                            []
 
-                    Just { grouping, labels } ->
-                        ( KeywordTerm, grouping )
-                            :: List.map (Tuple.pair LabelTerm) labels
+                        Just { grouping, labels } ->
+                            ( KeywordTerm, grouping )
+                                :: List.map (Tuple.pair LabelTerm) labels
+                   )
 
-        BinaryExpr lhs op rhs ->
-            expression lhs
-                ++ [ ( OperatorTerm, op.op ) ]
-                ++ List.concatMap modifier op.modifiers
-                ++ expression rhs
+        BinaryExpr { leftExpression, operator, modifiers, rightExpression } ->
+            expression leftExpression
+                ++ [ ( OperatorTerm, operator ) ]
+                ++ List.concatMap modifier modifiers
+                ++ expression rightExpression
 
-        FunctionCall { func, args } ->
-            ( FunctionTerm, func ) :: List.concatMap expression args
+        FunctionCall { function, arguments } ->
+            ( FunctionTerm, function ) :: List.concatMap expression arguments
 
         NumberLiteral num ->
             [ ( NumberTerm, num ) ]
@@ -142,7 +144,10 @@ maybeOffset offset =
 
 matcher : Matcher -> List ( Term, Offset )
 matcher { name, op, value } =
-    [ ( LabelTerm, name ), ( OperatorTerm, op ), ( StringTerm, value ) ]
+    [ ( LabelTerm, name )
+    , ( OperatorTerm, op )
+    , ( StringTerm, value )
+    ]
 
 
 sliceOffset : String -> Int -> Int -> String

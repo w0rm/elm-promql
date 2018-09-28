@@ -47,8 +47,14 @@ highghtedResult input result =
             , style "box-sizing" "border-box"
             ]
     in
-    Html.div [ style "width" "500px", style "min-height" "40px", style "position" "relative" ]
-        [ Html.div (styles ++ [ style "border" "1px solid transparent" ]) (result ++ [ Html.br [] [] ])
+    Html.div
+        [ style "width" "500px"
+        , style "min-height" "40px"
+        , style "position" "relative"
+        ]
+        [ Html.div
+            (styles ++ [ style "border" "1px solid transparent" ])
+            (result ++ [ Html.br [] [] ])
         , Html.textarea
             ([ value input
              , onInput identity

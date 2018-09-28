@@ -1,13 +1,32 @@
-module AST exposing (..)
+module AST exposing
+    ( AggregateGroup
+    , Expression(..)
+    , Matcher
+    , Modifier
+    , Offset
+    )
 
 
 type Expression
-    = AggregateExpr1 Offset AggregateGroup (List Expression)
-    | AggregateExpr2 Offset (List Expression) (Maybe AggregateGroup)
-    | BinaryExpr Expression Operator Expression
+    = AggregateExpr1
+        { operator : Offset
+        , group : AggregateGroup
+        , arguments : List Expression
+        }
+    | AggregateExpr2
+        { operator : Offset
+        , arguments : List Expression
+        , maybeGroup : Maybe AggregateGroup
+        }
+    | BinaryExpr
+        { leftExpression : Expression
+        , operator : Offset
+        , modifiers : List Modifier
+        , rightExpression : Expression
+        }
     | FunctionCall
-        { func : Offset
-        , args : List Expression
+        { function : Offset
+        , arguments : List Expression
         }
     | Selector
         { name : Maybe Offset
@@ -19,12 +38,6 @@ type Expression
     | ParenExpr Expression
     | StringLiteral Offset
     | UnaryExpr Offset Expression
-
-
-type alias Operator =
-    { op : Offset
-    , modifiers : List Modifier
-    }
 
 
 type alias Modifier =
